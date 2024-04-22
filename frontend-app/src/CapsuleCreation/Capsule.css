@@ -1,0 +1,102 @@
+/* Styles for the capsule container */
+.capsule-container {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+/* Styles for the blurred background overlay */
+.capsule-container::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('Background_image.jpg');
+    background-size: cover;
+    background-position: center;
+    filter: blur(5px);
+    z-index: -1;
+}
+
+/* Styles for the capsule form container */
+.capsule-form-container {
+    position: relative;
+    background-color: rgba(255, 255, 255, 0.9);
+    padding: 2em;
+    border-radius: 10px;
+    box-shadow: 0 5px 10px rgba(0, 0, 0, 0.2);
+    max-width: 400px;
+    width: 70%;
+}
+
+/* Styles for the capsule form title */
+.capsule-form-title {
+    text-align: center;
+}
+
+.line{
+    height: 2px;
+    background-color: black;
+}
+
+
+/* Styles for the capsule form */
+.capsule-form {
+    margin-top: 3em;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Styles for the input group */
+.input-group {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5em; /* Increased margin-bottom for the input-group */
+}
+
+/* Styles for the label container */
+.label-container {
+    flex-basis: 40%;
+    text-align: left;
+    margin-right: 20px;
+}
+
+/* Styles for the input container */
+.input-container {
+    flex-basis: 60%;
+    padding-left: 20px;
+}
+
+/* Styles for the capsule form input and textarea */
+.capsule-form input,
+.capsule-form textarea {
+    width: 100%;
+    padding: 0.5em;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+/* Styles for the capsule form labels */
+.capsule-form label {
+    margin-bottom: 0.5em; /* Ensure space between label and input */
+}
+
+/* Styles for the capsule form submit button */
+.capsule-form button {
+    margin-top: 2em; /* Increased space above the button */
+    padding: 1em;
+    background-color: #673ab7;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.capsule-form button:hover {
+    background-color: #5e35b1;
+}
