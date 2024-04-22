@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Launch EC2 instances with Docker for your React frontend and Flask backend and setup API Gateway
+
+Parameters:
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - m3.medium
+      - m3.large
+      - m3.xlarge
+      - m3.2xlarge
+    ConstraintDescription: Must be a valid EC2 instance type from the list.
+
+Resources:
+
+  BackEndEC2Instance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2:1}}'
+      IamInstanceProfile: LabInstanceProfile
+      Tags:
+        - Key: Name
+          Value: BackEndEC2Instance
+      SecurityGroups:
+        - !Ref BackendSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo yum update -y
+          sudo yum install -y docker
+          sudo service docker start
+          sudo usermod -a -G docker ec2-user
+          docker login --username tejaspabbu --password Pokemon@12
+          docker pull tejaspabbu/capsule-backend:latest
+          docker run -d -p 7000:7000 tejaspabbu/capsule-backend:latest
+          BACKEND_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)            
+          echo "$BACKEND_IP" > /tmp/backend_ip.txt
+          sudo yum install -y aws-cli
+          aws s3 cp /tmp/backend_ip.txt s3://backend-ip/backend_ip.txt
+
+  BackendSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable SSH and HTTP access on the backend
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 7000
+          ToPort: 7000
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp 
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  FrontEndEC2Instance:
+    Type: 'AWS::EC2::Instance'
+    DependsOn: 
+      - BackEndEC2Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2:1}}'
+      IamInstanceProfile: LabInstanceProfile
+      Tags:
+        - Key: Name
+          Value: FrontEndEC2Instance
+      SecurityGroups:
+        - !Ref FrontendSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y docker
+          service docker start
+          usermod -a -G docker ec2-user
+          yum install -y aws-cli
+          PRE_SIGNED_URL=$(aws s3 presign s3://backend-ip/backend_ip.txt --expires-in 3600)
+          curl -o backend_ip.txt "$PRE_SIGNED_URL" 
+          BACKEND_IP=$(cat backend_ip.txt)
+          export REACT_APP_BACKEND_IP=$BACKEND_IP
+          docker login --username tejaspabbu --password Pokemon@12
+          docker pull tejaspabbu/capsule-frontend:latest
+          docker run -p 3000:3000 -e REACT_APP_BACKEND_IP=$BACKEND_IP tejaspabbu/capsule-frontend:latest
+
+  FrontendSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable SSH and HTTP access on the frontend
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp 
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+Outputs:
+  BackendInstanceIP:
+    Description: The public IP address of the backend EC2 instance
+    Value: !GetAtt BackEndEC2Instance.PublicIp
+
+  FrontendInstanceIP:
+    Description: The public IP address of the frontend EC2 instance
+    Value: !GetAtt FrontEndEC2Instance.PublicIp
+

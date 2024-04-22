@@ -1,0 +1,102 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to create DynamoDB tables and an S3 bucket
+
+Resources:
+  UserRegistrationTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: UserRegistrationTable
+      AttributeDefinitions:
+        - AttributeName: Email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: Email
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  CapsuleMetadataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: CapsuleMetadataTable
+      AttributeDefinitions:
+        - AttributeName: capsuleId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: capsuleId
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+
+  TextractBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: textractimagebucket  
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  TextractImageBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref TextractBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Id: Policy1690592190798
+        Statement:
+          - Sid: Stmt1690594188779
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Join [ "", ["arn:aws:s3:::textractimagebucket/*"] ]
+
+  BackendIpBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: backend-ip
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  BackendIpBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref BackendIpBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Id: Policy1690593190782
+        Statement:
+          - Sid: Stmt1690593188769
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Join [ "", ["arn:aws:s3:::backend-ip/*"] ]
+
+Outputs:
+  UserRegistrationTableArn:
+    Value: !GetAtt UserRegistrationTable.Arn
+    Description: ARN of the User Registration DynamoDB table
+
+  CapsuleMetadataTableArn:
+    Value: !GetAtt CapsuleMetadataTable.Arn
+    Description: ARN of the Capsule Metadata DynamoDB table
+
+  CapsuleMetadataTableStreamArn:
+    Value: !GetAtt CapsuleMetadataTable.StreamArn
+    Description: Stream ARN of the Capsule Metadata DynamoDB table
+    Export:
+      Name: CapsuleMetadataTableStreamArn
+
+  TextractImageBucketName:
+    Value: !Ref TextractBucket
+    Description: Name of the Textract Image S3 Bucket
+    Export:
+      Name: TextractBucketName

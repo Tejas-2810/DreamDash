@@ -1,0 +1,230 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to create Lambda functions for DynamoDB and EventBridge
+
+Parameters:
+  LabRoleARN:
+    Description: ARN of the IAM Role for Lambda functions
+    Type: String
+    Default: arn:aws:iam::645019798228:role/LabRole
+
+Resources:
+  CapsuleDeliveryLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: CapsuleDeliveryLambda
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+
+          # Initialize logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          # Initialize AWS SDK clients
+          dynamodb = boto3.resource('dynamodb')
+          s3 = boto3.client('s3')
+          sns = boto3.client('sns')
+          lambda_client = boto3.client('lambda')
+
+          # DynamoDB table and S3 bucket name - replace with your actual table and bucket names
+          DYNAMODB_TABLE = 'CapsuleMetadataTable'
+          S3_BUCKET = 'textractimagebucket'
+
+          def get_capsule_metadata(capsule_id):
+              table = dynamodb.Table(DYNAMODB_TABLE)
+              try:
+                  response = table.get_item(Key={'capsuleId': capsule_id})
+                  if 'Item' in response:
+                      return response['Item']
+                  else:
+                      print(f"No data found for capsuleId: {capsule_id}")
+                      return None
+              except Exception as e:
+                  print(f"Error retrieving capsule metadata: {e}")
+                  return None
+
+          def send_notification(topic_arn, message):
+              try:
+                  response = sns.publish(
+                      TopicArn=topic_arn,
+                      Message=message,
+                      Subject='Suprise! A time capsule from your former self is waiting for you!'
+                  )
+                  return response
+              except Exception as e:
+                  print(f"Error sending SNS notification: {e}")
+                  return None
+
+
+          def lambda_handler(event, context):
+              # Extract information from the event
+              capsule_id = event['capsuleId']
+
+
+              # Ensure that the Lambda has permission to be invoked by the EventBridge rule
+              # Note: In production, this should be managed via IAM roles and policies outside of the function's runtime logic
+
+              # Retrieve capsule metadata
+              metadata = get_capsule_metadata(capsule_id)
+              if not metadata:
+                  return {'statusCode': 404, 'body': 'Metadata not found'}
+
+              # Compose the notification message
+              text_content = metadata.get('textContent', '')
+              extracted_text = metadata.get('extractedText', '')
+              message = f"{text_content}\n\nOn your success journey, I have a quick motivational quote for you:\n\n{extracted_text}"
+
+              # Send the notification
+              sns_response = send_notification(metadata['snsTopicArn'], message)
+              if not sns_response:
+                  return {'statusCode': 500, 'body': 'Failed to send notification'}
+
+              return {'statusCode': 200, 'body': 'Capsule delivered successfully'}
+
+
+      Role: !Sub ${LabRoleARN}
+
+  DeliverySchedulingLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: DeliverySchedulingLambda
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+          from datetime import datetime, timedelta
+
+          # Initialize logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          # Initialize AWS SDK clients
+          eventbridge = boto3.client('events')
+          lambda_client = boto3.client('lambda')
+          HALIFAX_TIME_DIFFERENCE_HOURS = -3
+
+          def lambda_handler(event, context):
+              processed_records = []
+              region = context.invoked_function_arn.split(":")[3]
+              account_id = context.invoked_function_arn.split(":")[4]
+              
+              for record in event['Records']:
+                  # Process only 'INSERT' events
+                  if record['eventName'] == 'INSERT':
+                      new_image = record['dynamodb']['NewImage']
+                      
+                      capsule_id = new_image['capsuleId']['S']
+                      delivery_date = new_image['deliveryDate']['S']
+                      user_id = new_image['email']['S']
+
+                      cron_expression = convert_date_to_cron(delivery_date)
+
+                      rule_name = f'CapsuleDelivery-{capsule_id}'
+
+                      rule_arn = f'arn:aws:events:{region}:{account_id}:rule/{rule_name}'
+                      try:
+                          # Create the EventBridge rule
+                          eventbridge.put_rule(
+                              Name=rule_name,
+                              ScheduleExpression=cron_expression,
+                              State='ENABLED',
+                              Description=f'Deliver capsule {capsule_id} to user {user_id}'
+                          )
+                          # give the arn for delivery lambda
+                          target_arn = 'arn:aws:lambda:us-east-1:645019798228:function:CapsuleDeliveryLambda'
+                          
+                          eventbridge.put_targets(
+                              Rule=rule_name,
+                              Targets=[{
+                                  'Id': f'TargetFor-{capsule_id}',
+                                  'Arn': target_arn,
+                                  'Input': json.dumps({
+                                      'capsuleId': capsule_id,
+                                  })
+                              }]
+                          )
+
+                          add_invoke_permission(target_arn, rule_arn)
+
+                          processed_records.append({
+                              'capsuleId': capsule_id,
+                              'ruleName': rule_name,
+                              'status': 'Success'
+                          })
+                          
+                          logger.info(f"Successfully created rule {rule_name} for capsule {capsule_id}")
+
+                      except Exception as e:
+                          logger.error(f"Error creating rule for capsule {capsule_id}: {e}")
+                          processed_records.append({
+                              'capsuleId': capsule_id,
+                              'ruleName': rule_name,
+                              'status': 'Error',
+                              'error': str(e)
+                          })
+
+              return {
+                  'processedRecords': processed_records
+              }
+
+          def add_invoke_permission(lambda_arn, rule_arn):
+              try:
+                  rule_name_part = rule_arn.split('/')[-1]
+                  statement_id = f"EventBridgeInvoke-{rule_name_part}".replace('/', '-').replace(':', '-')
+                  lambda_client.add_permission(
+                      FunctionName=lambda_arn,
+                      StatementId=statement_id,
+                      Action='lambda:InvokeFunction',
+                      Principal='events.amazonaws.com',
+                      SourceArn=rule_arn
+                  )
+                  logger.info(f"Invoke permission added for {lambda_arn} with rule {rule_arn}")
+              except lambda_client.exceptions.ResourceConflictException:
+                  logger.info(f"Permission already exists for {lambda_arn} with rule {rule_arn}")
+              except Exception as e:
+                  logger.error(f"Error adding invoke permission for {lambda_arn}: {e}")
+
+
+          def convert_date_to_cron(delivery_date):
+              # Parse the delivery_date string into a datetime object
+              date_time_obj = datetime.fromisoformat(delivery_date)
+
+              adjusted_date_time_obj = date_time_obj + timedelta(hours=3)
+
+              # Extract year, month, day, hour, and minute components
+              year = adjusted_date_time_obj.year
+              month = adjusted_date_time_obj.month
+              day = adjusted_date_time_obj.day
+              hour = adjusted_date_time_obj.hour
+              minute = adjusted_date_time_obj.minute
+
+              # Construct the cron expression (minute, hour, day of month, month, day of week, year)
+              cron_expression = f'cron({minute} {hour} {day} {month} ? {year})'
+
+              return cron_expression
+      Role: !Sub ${LabRoleARN}
+
+  CapsuleMetadataTableEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 1
+      EventSourceArn: !ImportValue CapsuleMetadataTableStreamArn
+      FunctionName: !GetAtt DeliverySchedulingLambda.Arn
+      StartingPosition: LATEST  
+
+
+Outputs:
+  CapsuleDeliveryLambdaArn:
+    Description: ARN of the Capsule Delivery Lambda function
+    Value: !GetAtt CapsuleDeliveryLambda.Arn
+
+  ScheduledLambdaArn:
+    Description: ARN of the Delivery Scheduling Lambda function
+    Value: !GetAtt CapsuleDeliveryLambda.Arn
